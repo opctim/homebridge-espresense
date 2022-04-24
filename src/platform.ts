@@ -61,9 +61,9 @@ export class EspresenseHomebridgePlatform implements DynamicPlatformPlugin {
           const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
 
           if (existingAccessory) {
-            const existingAccessoryInstance = this.accessoryInstances.find(
-                accessoryInstance => accessoryInstance.accessory.UUID === uuid
-            );
+            const existingAccessoryInstance = this.accessoryInstances.find((accessoryInstance) => {
+               return accessoryInstance.accessory.UUID === uuid;
+            });
 
             if (!existingAccessoryInstance) {
               this.accessoryInstances.push(new EspresensePlatformAccessory(this, existingAccessory));

@@ -1,11 +1,11 @@
-import { Service, PlatformAccessory, CharacteristicValue, Characteristic } from 'homebridge';
+import { Service, PlatformAccessory, CharacteristicValue } from 'homebridge';
 import { EspresenseHomebridgePlatform } from './platform';
 import {
   DEVICE_SET_ABSORPTION_TOPIC,
   DEVICE_SET_ACTIVE_SCAN_TOPIC,
   DEVICE_SET_MAX_DISTANCE_TOPIC,
   DEVICE_TOPIC,
-  DEVICE_TOPIC_REGEX
+  DEVICE_TOPIC_REGEX,
 } from './settings';
 import Device from './interfaces/device';
 import { RoomConfig } from './interfaces/config';
@@ -67,9 +67,9 @@ export class EspresensePlatformAccessory {
 
       // Configure active_scan on node
       this.publishIf(
-          this.addRoomName(DEVICE_SET_ACTIVE_SCAN_TOPIC),
-          activeScanPayload,
-          activeScanCondition
+        this.addRoomName(DEVICE_SET_ACTIVE_SCAN_TOPIC),
+        activeScanPayload,
+        activeScanCondition,
       ).then(() => {
         if (activeScanCondition) {
           this.platform.log.info(`[${roomName}] Turned active_scan ${activeScanPayload}`);
@@ -80,9 +80,9 @@ export class EspresensePlatformAccessory {
 
         // Configure absorption level on node
         this.publishIf(
-            this.addRoomName(DEVICE_SET_ABSORPTION_TOPIC),
-            absorptionSetting + '',
-            absorptionCondition
+          this.addRoomName(DEVICE_SET_ABSORPTION_TOPIC),
+          absorptionSetting + '',
+          absorptionCondition,
         ).then(() => {
           if (absorptionCondition) {
             this.platform.log.info(`[${roomName}] Set absorption to ${absorptionSetting}`);
@@ -93,9 +93,9 @@ export class EspresensePlatformAccessory {
 
           // Configure max device distance on node
           this.publishIf(
-              this.addRoomName(DEVICE_SET_MAX_DISTANCE_TOPIC),
-              maxDistanceSetting + '',
-              maxDistanceCondition
+            this.addRoomName(DEVICE_SET_MAX_DISTANCE_TOPIC),
+            maxDistanceSetting + '',
+            maxDistanceCondition,
           ).then(() => {
             if (maxDistanceCondition) {
               this.platform.log.info(`[${roomName}] Set max_distance to ${maxDistanceSetting}`);
@@ -103,9 +103,10 @@ export class EspresensePlatformAccessory {
 
             // Subscribe to node device topic
             this.platform.mqttClient.subscribe(this.addRoomName(DEVICE_TOPIC)).then(() => {
-              this.platform.log.info(
-                  `[${roomName}] Subscribed to device topic. Room ready. Device timeout: ${this.getDeviceTimeout()}`
-              );
+              let debugMessage = `[${roomName}] Subscribed to device topic.`;
+              debugMessage += `Room ready. Device timeout: ${this.getDeviceTimeout()}`;
+
+              this.platform.log.info(debugMessage);
 
               resolve();
             });
