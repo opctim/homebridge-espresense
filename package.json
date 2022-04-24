@@ -1,16 +1,15 @@
 {
-  "private": true,
-  "displayName": "Plugin Name",
-  "name": "homebridge-plugin-name",
+  "displayName": "ESPresense Homebridge Plugin",
+  "name": "homebridge-espresense",
   "version": "1.0.0",
   "description": "A short description about what your plugin does.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git://github.com/USERNAME/GITHUB_PROJECT_NAME.git"
+    "url": "git://github.com/opctim/homebridge-espresense.git"
   },
   "bugs": {
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME/issues"
+    "url": "https://github.com/opctim/homebridge-espresense/issues"
   },
   "engines": {
     "node": ">=14.18.1",
@@ -24,11 +23,22 @@
     "prepublishOnly": "npm run lint && npm run build"
   },
   "keywords": [
-    "homebridge-plugin"
+    "homebridge-plugin",
+    "espresense",
+    "homeassistant",
+    "mqtt",
+    "occupancy",
+    "homekit",
+    "sensor",
+    "activity"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "async-mqtt": "^2.6.2",
+    "mqtt": "^4.3.7",
+    "rxjs": "^7.5.5"
+  },
   "devDependencies": {
-    "@types/node": "^16.10.9",
+    "@types/node": "^16.11.27",
     "@typescript-eslint/eslint-plugin": "^5.0.0",
     "@typescript-eslint/parser": "^5.0.0",
     "eslint": "^8.0.1",

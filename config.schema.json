@@ -1,15 +1,81 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "ESPresense",
   "pluginType": "platform",
   "singular": true,
   "schema": {
     "type": "object",
     "properties": {
-      "name": {
-        "title": "Name",
-        "type": "string",
-        "required": true,
-        "default": "Example Dynamic Platform"
+      "roomSettings": {
+        "title": "Room settings",
+        "type": "array",
+        "items": {
+          "title": "Room",
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "The room's name",
+              "type": "string",
+              "required": true
+            },
+            "maxDistance": {
+              "title": "Maximum presence distance",
+              "type": "integer",
+              "min": 0,
+              "max": 16
+            }
+          }
+        }
+      },
+      "mqtt": {
+        "title": "MQTT",
+        "type": "object",
+        "properties": {
+          "url": {
+            "title": "URL",
+            "type": "string",
+            "required": true,
+            "default": "mqtt://127.0.0.1:1883"
+          },
+          "options": {
+            "title": "Options",
+            "type": "object",
+            "required": false,
+            "default": null,
+            "properties": {
+              "port": {
+                "title": "Port",
+                "type": "integer",
+                "required": false,
+                "default": 1883,
+                "maximum": 65535
+              },
+              "host": {
+                "title": "Host",
+                "type": "string",
+                "required": false,
+                "default": "127.0.0.1"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string",
+                "required": false,
+                "default": ""
+              },
+              "username": {
+                "title": "Username",
+                "type": "string",
+                "required": false,
+                "default": null
+              },
+              "password": {
+                "title": "Password",
+                "type": "string",
+                "required": false,
+                "default": null
+              }
+            }
+          }
+        }
       }
     }
   }

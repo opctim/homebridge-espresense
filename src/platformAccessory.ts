@@ -1,141 +1,226 @@
-import { Service, PlatformAccessory, CharacteristicValue } from 'homebridge';
+import { Service, PlatformAccessory, CharacteristicValue, Characteristic } from 'homebridge';
+import { EspresenseHomebridgePlatform } from './platform';
+import {
+  DEVICE_SET_ABSORPTION_TOPIC,
+  DEVICE_SET_ACTIVE_SCAN_TOPIC,
+  DEVICE_SET_MAX_DISTANCE_TOPIC,
+  DEVICE_TOPIC,
+  DEVICE_TOPIC_REGEX
+} from './settings';
+import Device from './interfaces/device';
+import { RoomConfig } from './interfaces/config';
 
-import { ExampleHomebridgePlatform } from './platform';
 
 /**
  * Platform Accessory
  * An instance of this class is created for each accessory your platform registers
  * Each accessory may expose multiple services of different service types.
  */
-export class ExamplePlatformAccessory {
+export class EspresensePlatformAccessory {
   private service: Service;
 
-  /**
-   * These are just used to create a working example
-   * You should implement your own code to track the state of your accessory
-   */
-  private exampleStates = {
-    On: false,
-    Brightness: 100,
-  };
+  private deviceList: { [ key: string ]: Device } = {};
+
+  private foundDebugMessage: string = '';
+
+  private deviceTimeouts: { [ key: string ]: NodeJS.Timeout } = {};
+
+  private presenceHandlerDebounceTimeout: NodeJS.Timeout | null = null;
+
+  private occupancyDetected = false;
+
 
   constructor(
-    private readonly platform: ExampleHomebridgePlatform,
-    private readonly accessory: PlatformAccessory,
+    private readonly platform: EspresenseHomebridgePlatform,
+    public readonly accessory: PlatformAccessory,
   ) {
-
     // set accessory information
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'ESPresense')
+      .setCharacteristic(this.platform.Characteristic.Model, this.accessory.context.telemetry.firm || '-')
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, this.accessory.context.telemetry.ip || '-');
 
-    // get the LightBulb service if it exists, otherwise create a new LightBulb service
-    // you can create multiple services for each accessory
-    this.service = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
+    // Fetch or create occupancy sensor service
+    this.service =
+      this.accessory.getService(this.platform.Service.OccupancySensor) ||
+      this.accessory.addService(this.platform.Service.OccupancySensor);
 
-    // set the service name, this is what is displayed as the default name on the Home app
-    // in this example we are using the name we stored in the `accessory.context` in the `discoverDevices` method.
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.exampleDisplayName);
+    // Set room name as default sensor name in homekit
+    this.service.setCharacteristic(this.platform.Characteristic.Name, this.accessory.context.roomName);
 
-    // each service must implement at-minimum the "required characteristics" for the given service type
-    // see https://developers.homebridge.io/#/service/Lightbulb
+    this.platform.log.info('Initialized Characteristics for room ' + this.accessory.context.roomName);
 
-    // register handlers for the On/Off Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.On)
-      .onSet(this.setOn.bind(this))                // SET - bind to the `setOn` method below
-      .onGet(this.getOn.bind(this));               // GET - bind to the `getOn` method below
-
-    // register handlers for the Brightness Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.Brightness)
-      .onSet(this.setBrightness.bind(this));       // SET - bind to the 'setBrightness` method below
-
-    /**
-     * Creating multiple services of the same type.
-     *
-     * To avoid "Cannot add a Service with the same UUID another Service without also defining a unique 'subtype' property." error,
-     * when creating multiple services of the same type, you need to use the following syntax to specify a name and subtype id:
-     * this.accessory.getService('NAME') || this.accessory.addService(this.platform.Service.Lightbulb, 'NAME', 'USER_DEFINED_SUBTYPE_ID');
-     *
-     * The USER_DEFINED_SUBTYPE must be unique to the platform accessory (if you platform exposes multiple accessories, each accessory
-     * can use the same sub type id.)
-     */
-
-    // Example: add two "motion sensor" services to the accessory
-    const motionSensorOneService = this.accessory.getService('Motion Sensor One Name') ||
-      this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor One Name', 'YourUniqueIdentifier-1');
-
-    const motionSensorTwoService = this.accessory.getService('Motion Sensor Two Name') ||
-      this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor Two Name', 'YourUniqueIdentifier-2');
-
-    /**
-     * Updating characteristics values asynchronously.
-     *
-     * Example showing how to update the state of a Characteristic asynchronously instead
-     * of using the `on('get')` handlers.
-     * Here we change update the motion sensor trigger states on and off every 10 seconds
-     * the `updateCharacteristic` method.
-     *
-     */
-    let motionDetected = false;
-    setInterval(() => {
-      // EXAMPLE - inverse the trigger
-      motionDetected = !motionDetected;
-
-      // push the new value to HomeKit
-      motionSensorOneService.updateCharacteristic(this.platform.Characteristic.MotionDetected, motionDetected);
-      motionSensorTwoService.updateCharacteristic(this.platform.Characteristic.MotionDetected, !motionDetected);
-
-      this.platform.log.debug('Triggering motionSensorOneService:', motionDetected);
-      this.platform.log.debug('Triggering motionSensorTwoService:', !motionDetected);
-    }, 10000);
+    // Apply settings to node, subscribe to device topic, etc.
+    this.setupDevice().then(() => {
+      // Listen on device topic for present devices. This will trigger homekit changes if necessary.
+      this.listen();
+    });
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, turning on a Light bulb.
-   */
-  async setOn(value: CharacteristicValue) {
-    // implement your own code to turn your device on/off
-    this.exampleStates.On = value as boolean;
+  setupDevice(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const roomName: string = this.accessory.context.roomName;
+      const roomSettings: RoomConfig | null = this.getRoomSettings();
 
-    this.platform.log.debug('Set Characteristic On ->', value);
+      const activeScanPayload: string = !!roomSettings?.activeScan ? 'ON' : 'OFF';
+      const activeScanCondition: boolean = roomSettings?.activeScan !== null;
+
+      // Configure active_scan on node
+      this.publishIf(
+          this.addRoomName(DEVICE_SET_ACTIVE_SCAN_TOPIC),
+          activeScanPayload,
+          activeScanCondition
+      ).then(() => {
+        if (activeScanCondition) {
+          this.platform.log.info(`[${roomName}] Turned active_scan ${activeScanPayload}`);
+        }
+
+        const absorptionSetting: number | null = roomSettings?.absorption || null;
+        const absorptionCondition: boolean = absorptionSetting !== null;
+
+        // Configure absorption level on node
+        this.publishIf(
+            this.addRoomName(DEVICE_SET_ABSORPTION_TOPIC),
+            absorptionSetting + '',
+            absorptionCondition
+        ).then(() => {
+          if (absorptionCondition) {
+            this.platform.log.info(`[${roomName}] Set absorption to ${absorptionSetting}`);
+          }
+
+          const maxDistanceSetting: number | null = roomSettings?.maxDistance || null;
+          const maxDistanceCondition: boolean = maxDistanceSetting !== null;
+
+          // Configure max device distance on node
+          this.publishIf(
+              this.addRoomName(DEVICE_SET_MAX_DISTANCE_TOPIC),
+              maxDistanceSetting + '',
+              maxDistanceCondition
+          ).then(() => {
+            if (maxDistanceCondition) {
+              this.platform.log.info(`[${roomName}] Set max_distance to ${maxDistanceSetting}`);
+            }
+
+            // Subscribe to node device topic
+            this.platform.mqttClient.subscribe(this.addRoomName(DEVICE_TOPIC)).then(() => {
+              this.platform.log.info(
+                  `[${roomName}] Subscribed to device topic. Room ready. Device timeout: ${this.getDeviceTimeout()}`
+              );
+
+              resolve();
+            });
+          });
+        });
+      });
+    });
   }
 
-  /**
-   * Handle the "GET" requests from HomeKit
-   * These are sent when HomeKit wants to know the current state of the accessory, for example, checking if a Light bulb is on.
-   *
-   * GET requests should return as fast as possbile. A long delay here will result in
-   * HomeKit being unresponsive and a bad user experience in general.
-   *
-   * If your device takes time to respond you should update the status of your device
-   * asynchronously instead using the `updateCharacteristic` method instead.
+  listen(): void {
+    const roomName: string = this.accessory.context.roomName;
 
-   * @example
-   * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
-   */
-  async getOn(): Promise<CharacteristicValue> {
-    // implement your own code to check if the device is on
-    const isOn = this.exampleStates.On;
+    const devicesToWatch: string[] = this.getRoomSettings()?.devices || [];
+    const devicesString: string = JSON.stringify(devicesToWatch);
 
-    this.platform.log.debug('Get Characteristic On ->', isOn);
+    this.platform.log.info(`[${roomName}] Listening to presence data. Watched devices: ${devicesString}`);
 
-    // if you need to return an error to show the device as "Not Responding" in the Home app:
-    // throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    this.platform.mqttClient.on('message', (topic: string, payload: Buffer) => {
+      const regExp = new RegExp(this.addRoomName(DEVICE_TOPIC_REGEX));
+      const matches: RegExpMatchArray | null = topic.match(regExp);
 
-    return isOn;
+      if (matches) {
+        const deviceName: string | null = matches[1] || null;
+        const device: Device = JSON.parse(payload.toString()) || null;
+
+        if (deviceName && device && devicesToWatch.includes(device.id)) {
+          this.addDevice(device);
+        }
+
+        this.handlePresence();
+      }
+    });
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, changing the Brightness
-   */
-  async setBrightness(value: CharacteristicValue) {
-    // implement your own code to set the brightness
-    this.exampleStates.Brightness = value as number;
+  handlePresence(): void {
+    if (this.presenceHandlerDebounceTimeout) {
+      clearTimeout(this.presenceHandlerDebounceTimeout);
+    }
 
-    this.platform.log.debug('Set Characteristic Brightness -> ', value);
+    this.presenceHandlerDebounceTimeout = setTimeout(() => {
+      const presence: boolean = this.hasPresence();
+
+      if (this.occupancyDetected === presence) {
+        return;
+      }
+
+      this.occupancyDetected = presence;
+
+      let value: CharacteristicValue;
+
+      if (this.occupancyDetected) {
+        value = this.platform.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED;
+      } else {
+        value = this.platform.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED;
+      }
+
+      this.service.updateCharacteristic(this.platform.Characteristic.OccupancyDetected, value);
+
+      this.platform.log.info(`[${this.accessory.context.roomName}] Updated sensor to "${value}"`);
+    }, 50);
   }
 
+  hasPresence(): boolean {
+    const devices: string[] = Object.keys(this.deviceList).map(k => this.deviceList[k].id);
+
+    const foundDebugMessage = `[${this.accessory.context.roomName}] Found: ${JSON.stringify(devices)}`;
+
+    if (foundDebugMessage !== this.foundDebugMessage) {
+      this.foundDebugMessage = foundDebugMessage;
+
+      this.platform.log.info(this.foundDebugMessage);
+    }
+
+    return devices.length > 0;
+  }
+
+  addDevice(device) {
+    clearTimeout(this.deviceTimeouts[device.id]);
+
+    this.deviceList[device.id] = device;
+
+    this.deviceTimeouts[device.id] = setTimeout(() => {
+      delete this.deviceList[device.id];
+
+      this.platform.log.info(`[${this.accessory.context.roomName}] Device "${device.id}" timed out`);
+
+      this.handlePresence();
+    }, this.getDeviceTimeout());
+  }
+
+  getDeviceTimeout(): number {
+    return this.getRoomSettings()?.timeout || 5000;
+  }
+
+  publishIf(topic: string, payload: string, condition: boolean): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (!condition) {
+        resolve();
+
+        return;
+      }
+
+      this.platform.mqttClient.publish(topic, payload).then(() => {
+        resolve();
+      });
+    });
+  }
+
+  getRoomSettings(): RoomConfig | null {
+    const settings: RoomConfig[] = this.platform.config?.roomSettings || [];
+
+    return settings.find(room => room.name === this.accessory.context.roomName) || null;
+  }
+
+  addRoomName(string: string): string {
+    return string.replace('{ROOM_NAME}', this.accessory.context.roomName);
+  }
 }

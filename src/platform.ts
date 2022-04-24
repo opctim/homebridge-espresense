@@ -1,36 +1,121 @@
-import { API, DynamicPlatformPlugin, Logger, PlatformAccessory, PlatformConfig, Service, Characteristic } from 'homebridge';
+import { API, APIEvent, DynamicPlatformPlugin, Logger, PlatformAccessory, Service, Characteristic } from 'homebridge';
+import { PLATFORM_NAME, PLUGIN_NAME, TELEMETRY_TOPIC, TELEMETRY_TOPIC_REGEX } from './settings';
+import { EspresensePlatformAccessory } from './platformAccessory';
+import { AsyncMqttClient } from 'async-mqtt';
+import * as mqtt from 'async-mqtt';
+import { Observable, Subscriber } from 'rxjs';
+import Telemetry from './interfaces/telemetry';
+import { EspresenseConfig } from './interfaces/config';
 
-import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
-import { ExamplePlatformAccessory } from './platformAccessory';
 
 /**
  * HomebridgePlatform
  * This class is the main constructor for your plugin, this is where you should
  * parse the user config and discover/register accessories with Homebridge.
  */
-export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
+export class EspresenseHomebridgePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service = this.api.hap.Service;
   public readonly Characteristic: typeof Characteristic = this.api.hap.Characteristic;
 
+  public mqttClient: AsyncMqttClient;
+
   // this is used to track restored cached accessories
   public readonly accessories: PlatformAccessory[] = [];
+  public readonly accessoryInstances: EspresensePlatformAccessory[] = [];
 
   constructor(
     public readonly log: Logger,
-    public readonly config: PlatformConfig,
+    public readonly config: EspresenseConfig,
     public readonly api: API,
   ) {
-    this.log.debug('Finished initializing platform:', this.config.name);
+    this.log.debug(`Finished initializing platform: ${this.config.name}`);
+
+    this.mqttClient = mqtt.connect(
+      this.config.mqtt.url || 'mqtt://127.0.0.1:1883',
+      this.config.mqtt.options,
+    );
+
+    this.api.on(APIEvent.SHUTDOWN, () => {
+      this.mqttClient.end();
+    });
+
+    this.mqttClient.on('connect', () => {
+      log.info('Connected to MQTT.');
+    });
+
+    this.mqttClient.on('error', (error: Error) => {
+      throw error;
+    });
 
     // When this event is fired it means Homebridge has restored all cached accessories from disk.
     // Dynamic Platform plugins should only register new accessories after this event was fired,
     // in order to ensure they weren't added to homebridge already. This event can also be used
     // to start discovery of new accessories.
-    this.api.on('didFinishLaunching', () => {
-      log.debug('Executed didFinishLaunching callback');
-      // run the method to discover / register your devices as accessories
-      this.discoverDevices();
+    this.api.on(APIEvent.DID_FINISH_LAUNCHING, () => {
+      this.mqttClient.subscribe(TELEMETRY_TOPIC);
+
+      this.discoverAccessories().subscribe({
+        next: ({ roomName, telemetry }) => {
+          const uuid: string = this.api.hap.uuid.generate(roomName + '#');
+
+          const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
+
+          if (existingAccessory) {
+            const existingAccessoryInstance = this.accessoryInstances.find(
+                accessoryInstance => accessoryInstance.accessory.UUID === uuid
+            );
+
+            if (!existingAccessoryInstance) {
+              this.accessoryInstances.push(new EspresensePlatformAccessory(this, existingAccessory));
+            }
+          } else {
+            // the accessory does not yet exist, so we need to create it
+            this.log.info(`Adding new accessory "${roomName}"`);
+
+            // create a new accessory
+            const accessory = new this.api.platformAccessory(roomName, uuid);
+
+            // store a copy of the device object in the `accessory.context`
+            // the `context` property can be used to store any data about the accessory you may need
+            accessory.context.roomName = roomName;
+            accessory.context.telemetry = telemetry;
+
+            // create the accessory handler for the newly create accessory
+            // this is imported from `platformAccessory.ts`
+            this.accessoryInstances.push(new EspresensePlatformAccessory(this, accessory));
+
+            // link the accessory to your platform
+            this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [ accessory ]);
+
+            this.accessories.push(accessory);
+          }
+        },
+      });
     });
+  }
+
+  discoverAccessories(): Observable<{ roomName: string; telemetry: Telemetry }> {
+    return new Observable<{ roomName: string; telemetry: Telemetry }>(
+      (subscriber: Subscriber<{ roomName: string; telemetry: Telemetry }>) => {
+        this.mqttClient.on('message', (topic: string, payload: Buffer) => {
+          const matches: RegExpMatchArray | null = topic.match(TELEMETRY_TOPIC_REGEX);
+
+          if (!matches) {
+            return;
+          }
+
+          const roomName: string | null = matches?.[1] || null;
+          const telemetry: Telemetry = JSON.parse(payload.toString());
+
+          if (roomName && telemetry) {
+            subscriber.next({
+              roomName,
+              telemetry,
+            });
+          }
+        });
+      },
+    );
   }
 
   /**
@@ -38,79 +123,9 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
    * It should be used to setup event handlers for characteristics and update respective values.
    */
   configureAccessory(accessory: PlatformAccessory) {
-    this.log.info('Loading accessory from cache:', accessory.displayName);
+    this.log.info(`Loading accessory "${accessory.displayName}" from cache.`);
 
     // add the restored accessory to the accessories cache so we can track if it has already been registered
     this.accessories.push(accessory);
-  }
-
-  /**
-   * This is an example method showing how to register discovered accessories.
-   * Accessories must only be registered once, previously created accessories
-   * must not be registered again to prevent "duplicate UUID" errors.
-   */
-  discoverDevices() {
-
-    // EXAMPLE ONLY
-    // A real plugin you would discover accessories from the local network, cloud services
-    // or a user-defined array in the platform config.
-    const exampleDevices = [
-      {
-        exampleUniqueId: 'ABCD',
-        exampleDisplayName: 'Bedroom',
-      },
-      {
-        exampleUniqueId: 'EFGH',
-        exampleDisplayName: 'Kitchen',
-      },
-    ];
-
-    // loop over the discovered devices and register each one if it has not already been registered
-    for (const device of exampleDevices) {
-
-      // generate a unique id for the accessory this should be generated from
-      // something globally unique, but constant, for example, the device serial
-      // number or MAC address
-      const uuid = this.api.hap.uuid.generate(device.exampleUniqueId);
-
-      // see if an accessory with the same uuid has already been registered and restored from
-      // the cached devices we stored in the `configureAccessory` method above
-      const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
-
-      if (existingAccessory) {
-        // the accessory already exists
-        this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
-
-        // if you need to update the accessory.context then you should run `api.updatePlatformAccessories`. eg.:
-        // existingAccessory.context.device = device;
-        // this.api.updatePlatformAccessories([existingAccessory]);
-
-        // create the accessory handler for the restored accessory
-        // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, existingAccessory);
-
-        // it is possible to remove platform accessories at any time using `api.unregisterPlatformAccessories`, eg.:
-        // remove platform accessories when no longer present
-        // this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [existingAccessory]);
-        // this.log.info('Removing existing accessory from cache:', existingAccessory.displayName);
-      } else {
-        // the accessory does not yet exist, so we need to create it
-        this.log.info('Adding new accessory:', device.exampleDisplayName);
-
-        // create a new accessory
-        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid);
-
-        // store a copy of the device object in the `accessory.context`
-        // the `context` property can be used to store any data about the accessory you may need
-        accessory.context.device = device;
-
-        // create the accessory handler for the newly create accessory
-        // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, accessory);
-
-        // link the accessory to your platform
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-      }
-    }
   }
 }
