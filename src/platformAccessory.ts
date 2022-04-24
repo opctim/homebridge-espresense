@@ -62,7 +62,7 @@ export class EspresensePlatformAccessory {
       const roomName: string = this.accessory.context.roomName;
       const roomSettings: RoomConfig | null = this.getRoomSettings();
 
-      const activeScanPayload: string = !!roomSettings?.activeScan ? 'ON' : 'OFF';
+      const activeScanPayload: string = roomSettings?.activeScan ? 'ON' : 'OFF';
       const activeScanCondition: boolean = roomSettings?.activeScan !== null;
 
       // Configure active_scan on node
