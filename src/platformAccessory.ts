@@ -21,7 +21,7 @@ export class EspresensePlatformAccessory {
 
   private deviceList: { [ key: string ]: Device } = {};
 
-  private foundDebugMessage: string = '';
+  private foundDebugMessage = '';
 
   private deviceTimeouts: { [ key: string ]: NodeJS.Timeout } = {};
 
