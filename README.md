@@ -6,7 +6,7 @@ This plugin is an alternative to using HomeAssistant, as ESPresense is primarily
 
 ## Example configuration
 
-```json lines
+```json5
 {
     "bridge": {
         "name": "Homebridge",
